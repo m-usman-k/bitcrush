@@ -1,4 +1,3 @@
 discord.py
-selenium
-webdriver-manager
-beautifulsoup4 
+beautifulsoup4
+playwright 
