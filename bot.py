@@ -7,8 +7,6 @@ from spotify_scraper import get_all_tracks
 import datetime
 import sys
 import asyncio
-from playwright.async_api import async_playwright
-import subprocess
 
 # --- CONFIGURATION & VALIDATION ---
 CONFIG_FILE = 'config.json'
@@ -30,18 +28,14 @@ def load_config():
     if "YOUR_ANNOUNCEMENT_CHANNEL_ID" in str(config.get('ANNOUNCEMENT_CHANNEL_ID', "")):
         print("Error: Please set your ANNOUNCEMENT_CHANNEL_ID in config.json")
         sys.exit(1)
+    if "YOUR_SPOTIFY_CLIENT_ID" in config.get('SPOTIFY_CLIENT_ID', ""):
+        print("Error: Please set your SPOTIFY_CLIENT_ID in config.json")
+        sys.exit(1)
+    if "YOUR_SPOTIFY_CLIENT_SECRET" in config.get('SPOTIFY_CLIENT_SECRET', ""):
+        print("Error: Please set your SPOTIFY_CLIENT_SECRET in config.json")
+        sys.exit(1)
         
     return config
-
-def _save_config_sync(data):
-    """(Internal) Synchronously saves data to the config file."""
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(data, f, indent=4)
-
-async def save_config(data):
-    """Asynchronously saves the configuration to prevent blocking the event loop."""
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, _save_config_sync, data)
 
 config = load_config()
 TOKEN = config['DISCORD_BOT_TOKEN']
@@ -91,11 +85,18 @@ async def check_for_new_release():
         print(f"Error: Channel with ID {channel_id} not found.")
         return
 
-    # Run the scraper function asynchronously
-    all_tracks = await get_all_tracks(ARTIST_URL)
+    # Run the scraper function in a separate thread to avoid blocking
+    loop = asyncio.get_running_loop()
+    all_tracks = await loop.run_in_executor(
+        None, 
+        get_all_tracks, 
+        ARTIST_URL, 
+        config['SPOTIFY_CLIENT_ID'], 
+        config['SPOTIFY_CLIENT_SECRET']
+    )
     
     if not all_tracks:
-        print("No tracks found or an error occurred during scraping.")
+        print("No tracks found or an error occurred during API fetch.")
         return
 
     announced_tracks = get_announced_tracks()
@@ -194,7 +195,6 @@ async def set_ann_channel(interaction: discord.Interaction, channel: TextChannel
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
     config['ANNOUNCEMENT_CHANNEL_ID'] = str(channel.id)
-    await save_config(config)
 
 # Set Ping Role
 @bot.tree.command(name="set-ping-role", description="Sets the role to ping for new releases.")
@@ -207,7 +207,6 @@ async def set_ping_role(interaction: discord.Interaction, role: Role):
     )
     await interaction.response.send_message(embed=embed, ephemeral=True)
     config['PING_ROLE_ID'] = str(role.id)
-    await save_config(config)
 
 # --- ERROR HANDLING ---
 @bot.tree.error
@@ -231,34 +230,8 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         print(f"An error occurred while trying to send an error message: {e}")
 
 async def main():
-    """Sets up the bot and runs it, ensuring browser dependencies are installed."""
-    print("Checking and installing browser dependencies for Playwright...")
-    try:
-        # This is a robust way to programmatically run 'playwright install'
-        # It ensures that the browser is downloaded in a way that Playwright can find it.
-        process = subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            capture_output=True,
-            text=True,
-            check=False # Don't throw exception on non-zero exit code
-        )
-        
-        # Log the output for debugging, regardless of success. This is useful on hosting platforms.
-        print("--- Playwright Install Output ---")
-        print(process.stdout)
-        if process.returncode != 0:
-            print("--- Playwright Install Error ---")
-            print(process.stderr)
-            print("--- End Playwright Install ---")
-            print("Playwright install command failed. The bot will try to run anyway, in case the browser is already present.")
-        else:
-            print("Playwright dependencies are set up successfully.")
-
-    except Exception as e:
-        print(f"An error occurred while trying to run the Playwright install command: {e}")
-        print("This might be okay if the browser is already installed.")
-
-    # Start the bot after setup
+    """Sets up and runs the bot."""
+    print("Starting bot...")
     await bot.start(TOKEN)
 
 # --- RUN BOT ---
